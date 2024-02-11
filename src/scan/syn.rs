@@ -25,7 +25,7 @@ impl Executor for Scan {
         let (tx, rs) = match channel(&interface::DEFAULT, *CONFIG) {
             Ok(Ethernet(tx, rx)) => (tx, rx),
             // INFO: make sure that ethernet is the only datalink channel available.
-            Ok(_) => unreachable!(),
+            Ok(_) => unreachable!(), // This wont happen in the current pnet version.
             Err(e) => abort(ScanError::DatalinkChannelFailed(e)),
         };
 
