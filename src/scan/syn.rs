@@ -1,42 +1,102 @@
-use std::{net::SocketAddr, time::Duration};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use once_cell::sync::Lazy;
-use pnet::datalink::{channel, ChannelType, Config};
+use pnet::{
+    packet::{
+        ip::IpNextHeaderProtocols,
+        ipv4::{self, Ipv4Flags, MutableIpv4Packet},
+        tcp::{ipv4_checksum, MutableTcpPacket, TcpFlags, TcpOption},
+        Packet,
+    },
+    transport::{ipv4_packet_iter, transport_channel, TransportChannelType},
+};
 
 use crate::{abort, error::ScanError, interface};
 
 use super::{Executor, PortState};
 
-const TIMEOUT: Duration = Duration::from_millis(1500);
+const TRIALS: usize = 3;
+const TCP_PKT_SZ: usize = 60;
+const IPV4_PKT_SZ: usize = 20 + TCP_PKT_SZ;
+const SOURCE_PORT: u16 = 36363;
+const IPV4_IDENTIFICATION: u16 = 0xabcd;
+const IPV4_TTL: u8 = 64;
 
-static CONFIG: Lazy<Config> = Lazy::new(|| Config {
-    read_timeout: TIMEOUT.into(),
-    write_timeout: TIMEOUT.into(),
-    channel_type: ChannelType::Layer2, // Default type, but I want to make sure.
-    ..Default::default()
-});
+fn to_ipv4(ip: IpAddr) -> Ipv4Addr {
+    match ip {
+        IpAddr::V4(ip) => ip,
+        IpAddr::V6(_) => unreachable!(),
+    }
+}
 
 #[derive(Debug)]
 pub struct Scan;
 
 impl Executor for Scan {
     fn scan(&self, addr: &SocketAddr) -> PortState {
-        use pnet::datalink::Channel::Ethernet;
-        let (tx, rs) = match channel(&interface::DEFAULT, *CONFIG) {
-            Ok(Ethernet(tx, rx)) => (tx, rx),
-            // INFO: make sure that ethernet is the only datalink channel available.
-            Ok(_) => unreachable!(), // This wont happen in the current pnet version.
+        let (mut sender, mut receiver) = match transport_channel(
+            4048,
+            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp),
+        ) {
+            Ok(pair) => pair,
             Err(e) => abort(ScanError::DatalinkChannelFailed(e)),
         };
 
-        let ip = addr.ip();
-        let port = addr.port();
+        // Prepare SYN packet.
 
-        let _ = tx;
-        let _ = rs;
-        let _ = ip;
-        let _ = port;
+        let source_ip = to_ipv4(interface::DEFAULT.ips.first().unwrap().ip());
+        let destination_ip = to_ipv4(addr.ip());
 
-        todo!()
+        // -> TCP packet.
+        let mut raw_tcp_pckt = [0; TCP_PKT_SZ];
+        let mut tcp_pckt = MutableTcpPacket::new(&mut raw_tcp_pckt).unwrap();
+        tcp_pckt.set_source(SOURCE_PORT);
+        tcp_pckt.set_destination(addr.port());
+        tcp_pckt.set_data_offset(8);
+        tcp_pckt.set_flags(TcpFlags::SYN);
+        tcp_pckt.set_window(u16::MAX);
+        tcp_pckt.set_options(&[
+            TcpOption::mss(1460),
+            TcpOption::sack_perm(),
+            TcpOption::nop(),
+            TcpOption::wscale(7),
+        ]);
+        tcp_pckt.set_checksum(ipv4_checksum(
+            &tcp_pckt.to_immutable(),
+            &source_ip,
+            &destination_ip,
+        ));
+
+        // -> IPv4 packet.
+        let mut raw_ipv4_pckt = [0; IPV4_PKT_SZ];
+        let mut ipv4_pckt = MutableIpv4Packet::new(&mut raw_ipv4_pckt).unwrap();
+        ipv4_pckt.set_version(4);
+        ipv4_pckt.set_header_length(69);
+        ipv4_pckt.set_total_length(IPV4_PKT_SZ as u16);
+        ipv4_pckt.set_identification(IPV4_IDENTIFICATION);
+        ipv4_pckt.set_flags(Ipv4Flags::DontFragment);
+        ipv4_pckt.set_ttl(IPV4_TTL);
+        ipv4_pckt.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
+        ipv4_pckt.set_source(source_ip);
+        ipv4_pckt.set_destination(destination_ip);
+        ipv4_pckt.set_checksum(ipv4::checksum(&ipv4_pckt.to_immutable()));
+        ipv4_pckt.set_payload(tcp_pckt.packet());
+
+        // Send SYN packet.
+        if !(0..TRIALS).any(|_| sender.send_to(ipv4_pckt.to_immutable(), addr.ip()).is_ok()) {
+            return PortState::_Closed;
+        }
+
+        // Evaluate result.
+        let mut ipv4_pckts = ipv4_packet_iter(&mut receiver);
+        loop {
+            match ipv4_pckts.next() {
+                Ok((_, IpAddr::V4(source))) if source == destination_ip => {
+                    // TODO: evaluate TCP flag (check RST, SYN/ACK) and ip protocol type.
+                    return PortState::Open;
+                }
+                Ok(_) => continue,
+                Err(_) => return PortState::_Closed,
+            };
+        }
     }
 }
