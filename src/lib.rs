@@ -11,7 +11,10 @@ pub mod logger;
 pub mod port;
 pub mod resolver;
 pub mod scan;
-pub mod user;
+
+pub fn is_user_sudo() -> bool {
+    unsafe { libc::getuid() == 0 }
+}
 
 pub fn abort(error: ScanError) -> ! {
     eprintln!("Internal Error: {}", error);

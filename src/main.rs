@@ -4,9 +4,8 @@ use clap::{
 };
 use pscan::{
     error::ScanError,
-    logger, resolver,
+    is_user_sudo, logger, resolver,
     scan::{Ports, ScanType, Scanner, Technique},
-    user,
 };
 
 struct ParsedArgs {
@@ -36,7 +35,7 @@ fn parse_args(matches: ArgMatches) -> Result<ParsedArgs, ScanError> {
         .map(|rt| {
             let technique = Technique::from(rt.as_str());
             match technique.kind {
-                ScanType::Syn if !user::is_sudo() => Err(ScanError::NormalUser),
+                ScanType::Syn if !is_user_sudo() => Err(ScanError::NormalUser),
                 _ => Ok(technique),
             }
         })

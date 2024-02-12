@@ -5,6 +5,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rayon::prelude::{IntoParallelIterator, ParallelIterator};
+
 mod syn;
 mod tcp;
 mod udp;
@@ -12,7 +14,7 @@ mod udp;
 #[derive(Debug, PartialEq, Eq)]
 pub enum PortState {
     Open,
-    Unknown,
+    Filtered,
     _Closed, // Closed ports arent exposed.
 }
 
@@ -23,7 +25,7 @@ impl Display for PortState {
             "{}",
             match self {
                 PortState::Open => "open",
-                PortState::Unknown => "unknown",
+                PortState::Filtered => "filtered",
                 PortState::_Closed => unreachable!(),
             }
         )
@@ -155,9 +157,8 @@ impl Scanner {
 
     fn scan_selected(&self, ports: &[u16]) -> Vec<PortResult> {
         ports
-            .iter()
-            .cloned()
-            .filter_map(|port| {
+            .into_par_iter()
+            .filter_map(|&port| {
                 self.techniques.iter().find_map(|t| {
                     self.scan_port(t.executor, port)
                         .map(|state| PortResult::new(port, state, t.kind))

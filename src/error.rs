@@ -18,4 +18,8 @@ pub enum ScanError {
     DatalinkChannelFailed(#[source] std::io::Error),
     #[error("IPv6 protocol isn't supported")]
     Ipv6NotSupported,
+    #[error("failed to get MAC address of gateway: {0}")]
+    GatewayFailed(String),
+    #[error("failed to get MAC address")]
+    MissingMacAddr,
 }

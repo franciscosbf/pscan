@@ -1,27 +1,57 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::{Duration, Instant},
+};
 
+use once_cell::sync::Lazy;
 use pnet::{
+    datalink::{channel, Channel, Config},
     packet::{
+        ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket},
+        icmp::{destination_unreachable::IcmpCodes, IcmpCode, IcmpPacket, IcmpTypes},
         ip::IpNextHeaderProtocols,
-        ipv4::{self, Ipv4Flags, MutableIpv4Packet},
-        tcp::{ipv4_checksum, MutableTcpPacket, TcpFlags, TcpOption},
+        ipv4::{self, Ipv4Flags, Ipv4Packet, MutableIpv4Packet},
+        tcp::{ipv4_checksum, MutableTcpPacket, TcpFlags, TcpOption, TcpPacket},
         Packet,
     },
-    transport::{ipv4_packet_iter, transport_channel, TransportChannelType},
 };
 
 use crate::{abort, error::ScanError, interface};
 
 use super::{Executor, PortState};
 
-const TRIALS: usize = 3;
+const SEND_TRIALS: usize = 3;
+const SEND_TIMOOUT: Duration = Duration::from_millis(4000);
+
 const TCP_PKT_SZ: usize = 40;
 const TCP_HDR_SZ: u8 = TCP_PKT_SZ as u8;
 const TCP_HDR_WORDS: u8 = TCP_HDR_SZ / 4;
+
 const IPV4_HDR_SZ: u8 = 20;
 const IPV4_HDR_WORDS: u8 = IPV4_HDR_SZ / 4;
 const IPV4_PKT_SZ: usize = IPV4_HDR_SZ as usize + TCP_PKT_SZ;
 const IPV4_TTL: u8 = 64;
+
+const ETHERNET_PKT_SZ: usize = 14 + IPV4_PKT_SZ;
+
+const SYN_ACK: u8 = TcpFlags::SYN | TcpFlags::ACK;
+
+const ICMP_TYPE_3_CODES: &[IcmpCode] = &[
+    IcmpCodes::DestinationHostUnreachable,
+    IcmpCodes::DestinationProtocolUnreachable,
+    IcmpCodes::DestinationPortUnreachable,
+    IcmpCodes::NetworkAdministrativelyProhibited,
+    IcmpCodes::HostAdministrativelyProhibited,
+    IcmpCodes::CommunicationAdministrativelyProhibited,
+];
+
+const CHANNEL_RW_TIMEOUT: Duration = Duration::from_millis(3000);
+
+static CHANNEL_CONFIG: Lazy<Config> = Lazy::new(|| Config {
+    read_timeout: Some(CHANNEL_RW_TIMEOUT),
+    write_timeout: Some(CHANNEL_RW_TIMEOUT),
+    ..Default::default()
+});
 
 fn to_ipv4(ip: IpAddr) -> Ipv4Addr {
     match ip {
@@ -35,24 +65,28 @@ pub struct Scan;
 
 impl Executor for Scan {
     fn scan(&self, addr: &SocketAddr) -> PortState {
-        let (mut sender, mut receiver) = match transport_channel(
-            4048,
-            TransportChannelType::Layer3(IpNextHeaderProtocols::Tcp),
-        ) {
-            Ok(pair) => pair,
+        let interface = &interface::DEFAULT;
+        let gateway_mac = *interface::GATEWAY;
+        let config = *CHANNEL_CONFIG;
+
+        let (mut sender, mut receiver) = match channel(interface, config) {
+            Ok(Channel::Ethernet(tx, rx)) => (tx, rx),
+            Ok(_) => unreachable!(),
             Err(e) => abort(ScanError::DatalinkChannelFailed(e)),
         };
 
         // Prepare SYN packet.
 
-        let source_ip = to_ipv4(interface::DEFAULT.ips.first().unwrap().ip());
+        let source_ip = to_ipv4(interface.ips.first().unwrap().ip());
+        let source_port = rand::random();
         let destination_ip = to_ipv4(addr.ip());
+        let destination_port = addr.port();
 
         // -> TCP packet.
         let mut raw_tcp_pckt = [0; TCP_PKT_SZ];
         let mut tcp_pckt = MutableTcpPacket::new(&mut raw_tcp_pckt).unwrap();
-        tcp_pckt.set_source(rand::random());
-        tcp_pckt.set_destination(addr.port());
+        tcp_pckt.set_source(source_port);
+        tcp_pckt.set_destination(destination_port);
         tcp_pckt.set_data_offset(TCP_HDR_WORDS);
         tcp_pckt.set_flags(TcpFlags::SYN);
         tcp_pckt.set_window(u16::MAX);
@@ -84,23 +118,73 @@ impl Executor for Scan {
         ipv4_pckt.set_checksum(ipv4::checksum(&ipv4_pckt.to_immutable()));
         ipv4_pckt.set_payload(tcp_pckt.packet());
 
-        // Send SYN packet.
-        if !(0..TRIALS).any(|_| sender.send_to(ipv4_pckt.to_immutable(), addr.ip()).is_ok()) {
-            return PortState::_Closed;
+        // -> Ethernet packet.
+        let mut raw_ethernet_pckt = [0; ETHERNET_PKT_SZ];
+        let mut ethernet_pckt = MutableEthernetPacket::new(&mut raw_ethernet_pckt).unwrap();
+        ethernet_pckt.set_ethertype(EtherTypes::Ipv4);
+        ethernet_pckt.set_source(interface.mac.unwrap());
+        ethernet_pckt.set_destination(gateway_mac);
+        ethernet_pckt.set_payload(ipv4_pckt.packet());
+
+        let mut send_syn = || {
+            sender
+                .send_to(ethernet_pckt.packet(), None)
+                .unwrap()
+                .is_ok()
+        };
+
+        send_syn();
+
+        let mut trials = 0..SEND_TRIALS;
+        let timeout = Instant::now();
+
+        while let Ok(raw) = receiver.next() {
+            if timeout.elapsed() > SEND_TIMOOUT {
+                if trials.next().is_none() {
+                    return PortState::Filtered;
+                }
+                send_syn();
+            }
+
+            let ethernet_pckt = EthernetPacket::new(raw).unwrap();
+            if ethernet_pckt.get_ethertype() != EtherTypes::Ipv4 {
+                continue;
+            }
+
+            let ipv4_pckt = Ipv4Packet::new(ethernet_pckt.payload()).unwrap();
+            if !(ipv4_pckt.get_destination() == source_ip
+                && ipv4_pckt.get_source() == destination_ip)
+            {
+                continue;
+            }
+
+            match ipv4_pckt.get_next_level_protocol() {
+                IpNextHeaderProtocols::Tcp => {
+                    let tcp_pckt = TcpPacket::new(ipv4_pckt.payload()).unwrap();
+                    if !(tcp_pckt.get_destination() == source_port
+                        && tcp_pckt.get_source() == destination_port)
+                    {
+                        continue;
+                    } else if tcp_pckt.get_flags() == SYN_ACK {
+                        return PortState::Open;
+                    }
+
+                    // RST flag means closed.
+                }
+                IpNextHeaderProtocols::Icmp => {
+                    let icmp_pckt = IcmpPacket::new(ipv4_pckt.payload()).unwrap();
+                    if icmp_pckt.get_icmp_type() == IcmpTypes::DestinationUnreachable
+                        && ICMP_TYPE_3_CODES.contains(&icmp_pckt.get_icmp_code())
+                    {
+                        return PortState::Filtered;
+                    }
+                }
+                _ => (), // Assumes that's closed.
+            }
+
+            break;
         }
 
-        // Evaluate result.
-        let mut ipv4_pckts = ipv4_packet_iter(&mut receiver);
-        loop {
-            match ipv4_pckts.next() {
-                Ok((_, IpAddr::V4(source))) if source == destination_ip => {
-                    // TODO: evaluate TCP flag (check RST, SYN/ACK) and ip protocol type.
-                    // Also don't forget to send a RST as response when SYN/ACK is received.
-                    return PortState::Open;
-                }
-                Ok(_) => continue,
-                Err(_) => return PortState::_Closed,
-            };
-        }
+        PortState::_Closed
     }
 }
