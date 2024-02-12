@@ -90,6 +90,7 @@ impl Executor for Scan {
             match ipv4_pckts.next() {
                 Ok((_, IpAddr::V4(source))) if source == destination_ip => {
                     // TODO: evaluate TCP flag (check RST, SYN/ACK) and ip protocol type.
+                    // Also don't forget to send a RST as response when SYN/ACK is received.
                     return PortState::Open;
                 }
                 Ok(_) => continue,
