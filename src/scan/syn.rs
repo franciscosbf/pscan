@@ -17,8 +17,6 @@ use super::{Executor, PortState};
 const TRIALS: usize = 3;
 const TCP_PKT_SZ: usize = 60;
 const IPV4_PKT_SZ: usize = 20 + TCP_PKT_SZ;
-const SOURCE_PORT: u16 = 36363;
-const IPV4_IDENTIFICATION: u16 = 0xabcd;
 const IPV4_TTL: u8 = 64;
 
 fn to_ipv4(ip: IpAddr) -> Ipv4Addr {
@@ -49,7 +47,7 @@ impl Executor for Scan {
         // -> TCP packet.
         let mut raw_tcp_pckt = [0; TCP_PKT_SZ];
         let mut tcp_pckt = MutableTcpPacket::new(&mut raw_tcp_pckt).unwrap();
-        tcp_pckt.set_source(SOURCE_PORT);
+        tcp_pckt.set_source(rand::random());
         tcp_pckt.set_destination(addr.port());
         tcp_pckt.set_data_offset(8);
         tcp_pckt.set_flags(TcpFlags::SYN);
@@ -72,7 +70,7 @@ impl Executor for Scan {
         ipv4_pckt.set_version(4);
         ipv4_pckt.set_header_length(69);
         ipv4_pckt.set_total_length(IPV4_PKT_SZ as u16);
-        ipv4_pckt.set_identification(IPV4_IDENTIFICATION);
+        ipv4_pckt.set_identification(rand::random());
         ipv4_pckt.set_flags(Ipv4Flags::DontFragment);
         ipv4_pckt.set_ttl(IPV4_TTL);
         ipv4_pckt.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
