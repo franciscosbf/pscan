@@ -1,3 +1,5 @@
+use std::net::IpAddr;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,4 +24,8 @@ pub enum ScanError {
     GatewayFailed(String),
     #[error("failed to get MAC address")]
     MissingMacAddr,
+    #[error("failed to send packet to `{0}`: {1}")]
+    PacketSendFailed(IpAddr, #[source] std::io::Error),
+    #[error("failed to receive packet to `{0}`: {1}")]
+    PacketRecvFailed(IpAddr, #[source] std::io::Error),
 }
