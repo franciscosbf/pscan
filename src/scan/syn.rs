@@ -17,9 +17,9 @@ use super::{Executor, PortState};
 const TRIALS: usize = 3;
 const TCP_PKT_SZ: usize = 40;
 const TCP_HDR_SZ: u8 = TCP_PKT_SZ as u8;
-const TCP_HDR_WORDS_SZ: u8 = TCP_HDR_SZ / 4;
+const TCP_HDR_WORDS: u8 = TCP_HDR_SZ / 4;
 const IPV4_HDR_SZ: u8 = 20;
-const IPV4_HDR_WORDS_SZ: u8 = IPV4_HDR_SZ / 4;
+const IPV4_HDR_WORDS: u8 = IPV4_HDR_SZ / 4;
 const IPV4_PKT_SZ: usize = IPV4_HDR_SZ as usize + TCP_PKT_SZ;
 const IPV4_TTL: u8 = 64;
 
@@ -53,7 +53,7 @@ impl Executor for Scan {
         let mut tcp_pckt = MutableTcpPacket::new(&mut raw_tcp_pckt).unwrap();
         tcp_pckt.set_source(rand::random());
         tcp_pckt.set_destination(addr.port());
-        tcp_pckt.set_data_offset(TCP_HDR_WORDS_SZ);
+        tcp_pckt.set_data_offset(TCP_HDR_WORDS);
         tcp_pckt.set_flags(TcpFlags::SYN);
         tcp_pckt.set_window(u16::MAX);
         tcp_pckt.set_options(&[
@@ -73,7 +73,7 @@ impl Executor for Scan {
         let mut raw_ipv4_pckt = [0; IPV4_PKT_SZ];
         let mut ipv4_pckt = MutableIpv4Packet::new(&mut raw_ipv4_pckt).unwrap();
         ipv4_pckt.set_version(4);
-        ipv4_pckt.set_header_length(IPV4_HDR_WORDS_SZ);
+        ipv4_pckt.set_header_length(IPV4_HDR_WORDS);
         ipv4_pckt.set_total_length(IPV4_PKT_SZ as u16);
         ipv4_pckt.set_identification(rand::random());
         ipv4_pckt.set_flags(Ipv4Flags::DontFragment);
