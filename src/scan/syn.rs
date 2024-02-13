@@ -229,7 +229,7 @@ impl Executor for Scan {
             }
 
             if timeout.elapsed() <= SEND_TIMOUT {
-                // Gets back to packet reading before trying to re-send syn packet.
+                // Goes back to packet reading before trying to re-send syn packet.
                 continue;
             }
 
