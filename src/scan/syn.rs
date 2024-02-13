@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     io::ErrorKind,
     net::{IpAddr, SocketAddrV4},
     time::{Duration, Instant},
@@ -36,6 +37,7 @@ const IPV4_TTL: u8 = 64;
 const ETHERNET_PKT_SZ: usize = 14 + IPV4_PKT_SZ;
 
 const SYN_ACK: u8 = TcpFlags::SYN | TcpFlags::ACK;
+const RST_ACK: u8 = TcpFlags::RST | TcpFlags::ACK;
 
 const ICMP_TYPE_3_CODES: &[IcmpCode] = &[
     IcmpCodes::DestinationHostUnreachable,
@@ -45,6 +47,25 @@ const ICMP_TYPE_3_CODES: &[IcmpCode] = &[
     IcmpCodes::HostAdministrativelyProhibited,
     IcmpCodes::CommunicationAdministrativelyProhibited,
 ];
+
+struct TcpKnownFlags(u8);
+
+impl TcpKnownFlags {
+    #[inline]
+    fn syn_ack(&self) -> bool {
+        self.0 == SYN_ACK
+    }
+}
+
+impl Display for TcpKnownFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            SYN_ACK => write!(f, "SYN/ACK"),
+            RST_ACK => write!(f, "RST/ACK"),
+            unknown => write!(f, "{:#x}", unknown),
+        }
+    }
+}
 
 static CHANNEL_CONFIG: Lazy<Config> = Lazy::new(|| Config {
     read_timeout: Some(Duration::from_millis(1500)),
@@ -121,7 +142,7 @@ impl Executor for Scan {
 
         let mut send_syn = || match sender.send_to(ethernet_pckt.packet(), None).unwrap() {
             Ok(_) => {
-                log::debug!("Sent SYN TCP packet to port `{}`", destination_port);
+                log::debug!("Sent `SYN` TCP packet to port `{}`", destination_port);
 
                 None
             }
@@ -166,7 +187,7 @@ impl Executor for Scan {
                                 break 'okb;
                             }
 
-                            let tcp_flags = tcp_pckt.get_flags();
+                            let tcp_flags = TcpKnownFlags(tcp_pckt.get_flags());
 
                             log::debug!(
                                 "Received `{}` TCP packet from port `{}`",
@@ -174,11 +195,11 @@ impl Executor for Scan {
                                 destination_port,
                             );
 
-                            if tcp_flags == SYN_ACK {
+                            if tcp_flags.syn_ack() {
                                 return PortState::Open;
                             }
 
-                            // RST flag means closed.
+                            // RST flag means closed and everyone else.
                         }
                         IpNextHeaderProtocols::Icmp => {
                             let icmp_pckt = IcmpPacket::new(ipv4_pckt.payload()).unwrap();
@@ -186,7 +207,7 @@ impl Executor for Scan {
                             let icmp_code = icmp_pckt.get_icmp_code();
 
                             log::debug!(
-                                "Received ICMP packet from port `{}` with type `{}` code `{}`",
+                                "Received ICMP packet from port `{}` with type `{}` and code `{}`",
                                 destination_port,
                                 icmp_type.0,
                                 icmp_code.0
