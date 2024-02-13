@@ -139,6 +139,8 @@ impl Executor for Scan {
         let mut trials = 0..SEND_TRIALS;
         let timeout = Instant::now();
 
+        // The following algorithm is based on https://nmap.org/book/synscan.html
+
         loop {
             if timeout.elapsed() > SEND_TIMOUT {
                 if trials.next().is_none() {
