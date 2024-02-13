@@ -21,8 +21,8 @@ use crate::{abort, error::ScanError, interface};
 
 use super::{Executor, PortState};
 
-const SEND_TRIALS: usize = 2;
-const SEND_TIMOUT: Duration = Duration::from_millis(2500);
+const SEND_TRIALS: usize = 4;
+const SEND_TIMOUT: Duration = Duration::from_millis(3500);
 
 const TCP_PKT_SZ: usize = 40;
 const TCP_HDR_SZ: u8 = TCP_PKT_SZ as u8;
@@ -47,8 +47,8 @@ const ICMP_TYPE_3_CODES: &[IcmpCode] = &[
 ];
 
 static CHANNEL_CONFIG: Lazy<Config> = Lazy::new(|| Config {
-    read_timeout: Some(Duration::from_millis(1000)),
-    write_timeout: Some(Duration::from_millis(500)),
+    read_timeout: Some(Duration::from_millis(1500)),
+    write_timeout: Some(Duration::from_millis(1500)),
     ..Default::default()
 });
 
@@ -121,7 +121,10 @@ impl Executor for Scan {
 
         let mut send_syn = || match sender.send_to(ethernet_pckt.packet(), None).unwrap() {
             Ok(_) => None,
-            Err(e) if e.kind() == ErrorKind::TimedOut => Some(PortState::_Closed),
+            Err(e) if e.kind() == ErrorKind::TimedOut => {
+                // This may indicate a false alert.
+                Some(PortState::Unknown)
+            }
             Err(e) => abort(ScanError::PacketSendFailed(IpAddr::V4(destination_ip), e)),
         };
 
@@ -135,30 +138,19 @@ impl Executor for Scan {
 
         // The following algorithm is based on https://nmap.org/book/synscan.html
 
-        loop {
-            if timeout.elapsed() > SEND_TIMOUT {
-                if trials.next().is_none() {
-                    return PortState::Filtered;
-                }
-
-                // Proceeds to the next try.
-                if let Some(status) = send_syn() {
-                    return status;
-                }
-            }
-
+        'lp: loop {
             match receiver.next() {
-                Ok(raw) => {
+                Ok(raw) => 'okb: {
                     let ethernet_pckt = EthernetPacket::new(raw).unwrap();
                     if ethernet_pckt.get_ethertype() != EtherTypes::Ipv4 {
-                        continue;
+                        break 'okb;
                     }
 
                     let ipv4_pckt = Ipv4Packet::new(ethernet_pckt.payload()).unwrap();
                     if !(ipv4_pckt.get_destination() == source_ip
                         && ipv4_pckt.get_source() == destination_ip)
                     {
-                        continue;
+                        break 'okb;
                     }
 
                     match ipv4_pckt.get_next_level_protocol() {
@@ -167,8 +159,18 @@ impl Executor for Scan {
                             if !(tcp_pckt.get_destination() == source_port
                                 && tcp_pckt.get_source() == destination_port)
                             {
-                                continue;
-                            } else if tcp_pckt.get_flags() == SYN_ACK {
+                                break 'okb;
+                            }
+
+                            let tcp_flags = tcp_pckt.get_flags();
+
+                            log::debug!(
+                                "Received TCP packet from port `{}` with flags `{:#x}`",
+                                destination_port,
+                                tcp_flags
+                            );
+
+                            if tcp_flags == SYN_ACK {
                                 return PortState::Open;
                             }
 
@@ -176,8 +178,18 @@ impl Executor for Scan {
                         }
                         IpNextHeaderProtocols::Icmp => {
                             let icmp_pckt = IcmpPacket::new(ipv4_pckt.payload()).unwrap();
-                            if icmp_pckt.get_icmp_type() == IcmpTypes::DestinationUnreachable
-                                && ICMP_TYPE_3_CODES.contains(&icmp_pckt.get_icmp_code())
+                            let icmp_type = icmp_pckt.get_icmp_type();
+                            let icmp_code = icmp_pckt.get_icmp_code();
+
+                            log::debug!(
+                                "ICMP packet received from port `{}` with type `{}` code `{}`",
+                                destination_port,
+                                icmp_type.0,
+                                icmp_code.0
+                            );
+
+                            if icmp_type == IcmpTypes::DestinationUnreachable
+                                && ICMP_TYPE_3_CODES.contains(&icmp_code)
                             {
                                 return PortState::Filtered;
                             }
@@ -185,10 +197,24 @@ impl Executor for Scan {
                         _ => (), // Assumes that's closed.
                     }
 
-                    break;
+                    break 'lp; // Gives up.
                 }
                 Err(e) if e.kind() == ErrorKind::TimedOut => (), // Tries again if possible.
                 Err(e) => abort(ScanError::PacketRecvFailed(IpAddr::V4(destination_ip), e)),
+            }
+
+            if timeout.elapsed() <= SEND_TIMOUT {
+                // Gets back to packet reading before trying to re-send syn packet.
+                continue;
+            }
+
+            if trials.next().is_none() {
+                return PortState::Filtered;
+            }
+
+            // Proceeds to the next try.
+            if let Some(status) = send_syn() {
+                return status;
             }
         }
 

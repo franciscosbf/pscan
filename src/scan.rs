@@ -15,6 +15,7 @@ mod udp;
 pub enum PortState {
     Open,
     Filtered,
+    Unknown,
     _Closed, // Closed ports arent exposed.
 }
 
@@ -26,6 +27,7 @@ impl Display for PortState {
             match self {
                 PortState::Open => "open",
                 PortState::Filtered => "filtered",
+                PortState::Unknown => "unknown",
                 PortState::_Closed => unreachable!(),
             }
         )
