@@ -14,7 +14,7 @@ mod syn;
 mod tcp;
 mod udp;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortState {
     Open,
     Filtered,
@@ -52,7 +52,7 @@ impl Display for ScanType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} scan",
+            "{}",
             match self {
                 ScanType::Tcp => "TCP",
                 ScanType::Syn => "TCP SYN",
@@ -88,7 +88,7 @@ pub enum PortsToScan {
     Selected(Vec<u16>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PortResult {
     pub port: u16,
     pub state: PortState,

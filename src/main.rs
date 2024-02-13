@@ -2,10 +2,11 @@ use anyhow::Result;
 use clap::{
     arg, crate_authors, crate_name, crate_version, ArgAction, ArgGroup, ArgMatches, Command,
 };
+use pad::PadStr;
 use pscan::{
     error::ScanError,
     is_user_sudo, logger, resolver,
-    scan::{PortsToScan, ScanType, Scanner, Technique},
+    scan::{PortsToScan, ScanResult, ScanType, Scanner, Technique},
 };
 
 struct ParsedArgs {
@@ -51,6 +52,26 @@ fn parse_args(matches: ArgMatches) -> Result<ParsedArgs, ScanError> {
     })
 }
 
+fn print_results(result: ScanResult) {
+    let mut out = format!("Scan Duration: {:.4}s\n\n", result.elapsed.as_secs_f32());
+    if result.ports.is_empty() {
+        out.push_str("Didn't find any open port.\n");
+    } else {
+        out.push_str("Port    State      Scan Method\n");
+
+        result.ports.iter().for_each(|pr| {
+            out.push_str(&format!(
+                "{:<8}{}{}\n",
+                pr.port,
+                format!("{}", pr.state).pad_to_width(11),
+                pr.kind,
+            ))
+        });
+    }
+
+    print!("{}", out);
+}
+
 fn main() -> Result<()> {
     let arg_matches = Command::new(crate_name!())
         .about(
@@ -94,9 +115,7 @@ fn main() -> Result<()> {
     let result = Scanner::new(ip, parsed.ports, parsed.techniques).start();
 
     // Show result.
-    // TODO:
-    println!("{:?}", result);
-    let _ = result;
+    print_results(result);
 
     Ok(())
 }
