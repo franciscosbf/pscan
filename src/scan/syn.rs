@@ -17,9 +17,9 @@ use pnet::{
     },
 };
 
-use crate::{abort, error::ScanError, interface};
+use crate::{abort, error::ScanError};
 
-use super::{Executor, PortState};
+use super::{interface, Executor, PortState};
 
 const SEND_TRIALS: usize = 4;
 const SEND_TIMOUT: Duration = Duration::from_millis(3500);
@@ -120,7 +120,11 @@ impl Executor for Scan {
         ethernet_pckt.set_payload(ipv4_pckt.packet());
 
         let mut send_syn = || match sender.send_to(ethernet_pckt.packet(), None).unwrap() {
-            Ok(_) => None,
+            Ok(_) => {
+                log::debug!("Sent SYN TCP packet to port `{}`", destination_port);
+
+                None
+            }
             Err(e) if e.kind() == ErrorKind::TimedOut => {
                 // This may indicate a false alert.
                 Some(PortState::Unknown)
@@ -165,9 +169,9 @@ impl Executor for Scan {
                             let tcp_flags = tcp_pckt.get_flags();
 
                             log::debug!(
-                                "Received TCP packet from port `{}` with flags `{:#x}`",
+                                "Received `{}` TCP packet from port `{}`",
+                                tcp_flags,
                                 destination_port,
-                                tcp_flags
                             );
 
                             if tcp_flags == SYN_ACK {
@@ -182,7 +186,7 @@ impl Executor for Scan {
                             let icmp_code = icmp_pckt.get_icmp_code();
 
                             log::debug!(
-                                "ICMP packet received from port `{}` with type `{}` code `{}`",
+                                "Received ICMP packet from port `{}` with type `{}` code `{}`",
                                 destination_port,
                                 icmp_type.0,
                                 icmp_code.0

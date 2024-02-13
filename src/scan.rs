@@ -1,4 +1,3 @@
-use crate::port::{Protocol, COMMON_PORTS};
 use std::{
     fmt::{Debug, Display},
     net::{Ipv4Addr, SocketAddrV4},
@@ -7,6 +6,10 @@ use std::{
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
+use self::port::{Protocol, COMMON_PORTS};
+
+mod interface;
+mod port;
 mod syn;
 mod tcp;
 mod udp;
@@ -80,12 +83,10 @@ impl Technique {
     }
 }
 
-pub enum Ports {
+pub enum PortsToScan {
     All,
     Selected(Vec<u16>),
 }
-
-use Ports::*;
 
 #[derive(Debug)]
 pub struct PortResult {
@@ -115,12 +116,12 @@ impl ScanResult {
 
 pub struct Scanner {
     ip: Ipv4Addr,
-    ports: Ports,
+    ports: PortsToScan,
     techniques: Vec<Technique>,
 }
 
 impl Scanner {
-    pub fn new(ip: Ipv4Addr, ports: Ports, techniques: Vec<Technique>) -> Self {
+    pub fn new(ip: Ipv4Addr, ports: PortsToScan, techniques: Vec<Technique>) -> Self {
         Self {
             ip,
             ports,
@@ -138,8 +139,6 @@ impl Scanner {
     }
 
     fn scan_all(&self) -> Vec<PortResult> {
-        use rayon::prelude::*;
-
         COMMON_PORTS
             .into_par_iter()
             .filter_map(|info| {
@@ -172,8 +171,8 @@ impl Scanner {
     pub fn start(&self) -> ScanResult {
         let now = Instant::now();
         let ports = match self.ports {
-            All => self.scan_all(),
-            Selected(ref ports) => self.scan_selected(ports),
+            PortsToScan::All => self.scan_all(),
+            PortsToScan::Selected(ref ports) => self.scan_selected(ports),
         };
         let elapsed = now.elapsed();
 

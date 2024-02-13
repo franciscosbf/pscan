@@ -6,9 +6,7 @@ use error::ScanError;
 std::compile_error!("linux is the only target os that was tested");
 
 pub mod error;
-pub mod interface;
 pub mod logger;
-pub mod port;
 pub mod resolver;
 pub mod scan;
 

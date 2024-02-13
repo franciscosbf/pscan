@@ -5,12 +5,12 @@ use clap::{
 use pscan::{
     error::ScanError,
     is_user_sudo, logger, resolver,
-    scan::{Ports, ScanType, Scanner, Technique},
+    scan::{PortsToScan, ScanType, Scanner, Technique},
 };
 
 struct ParsedArgs {
     debug: bool,
-    ports: Ports,
+    ports: PortsToScan,
     techniques: Vec<Technique>,
     target: String,
 }
@@ -19,14 +19,14 @@ fn parse_args(matches: ArgMatches) -> Result<ParsedArgs, ScanError> {
     let debug = matches.get_flag("debug");
 
     let ports = match matches.get_many::<String>("port") {
-        Some(rps) => Ports::Selected(
+        Some(rps) => PortsToScan::Selected(
             rps.map(|rp| match rp.parse::<u16>() {
                 Ok(p) => Ok(p),
                 Err(_) => Err(ScanError::InvalidPort(String::from(rp))),
             })
             .collect::<Result<_, _>>()?,
         ),
-        None => Ports::All,
+        None => PortsToScan::All,
     };
 
     let techniques = matches
