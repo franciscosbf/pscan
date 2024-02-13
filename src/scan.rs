@@ -1,7 +1,7 @@
 use crate::port::{Protocol, COMMON_PORTS};
 use std::{
     fmt::{Debug, Display},
-    net::{IpAddr, SocketAddr},
+    net::{Ipv4Addr, SocketAddrV4},
     time::{Duration, Instant},
 };
 
@@ -33,7 +33,7 @@ impl Display for PortState {
 }
 
 trait Executor: Debug + Sync {
-    fn scan(&self, addr: &SocketAddr) -> PortState;
+    fn scan(&self, addr: &SocketAddrV4) -> PortState;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,13 +112,13 @@ impl ScanResult {
 }
 
 pub struct Scanner {
-    ip: IpAddr,
+    ip: Ipv4Addr,
     ports: Ports,
     techniques: Vec<Technique>,
 }
 
 impl Scanner {
-    pub fn new(ip: IpAddr, ports: Ports, techniques: Vec<Technique>) -> Self {
+    pub fn new(ip: Ipv4Addr, ports: Ports, techniques: Vec<Technique>) -> Self {
         Self {
             ip,
             ports,
@@ -127,7 +127,7 @@ impl Scanner {
     }
 
     fn scan_port(&self, executor: &'static dyn Executor, port: u16) -> Option<PortState> {
-        let addr = SocketAddr::new(self.ip, port);
+        let addr = SocketAddrV4::new(self.ip, port);
         let state = executor.scan(&addr);
         if state == PortState::_Closed {
             return None;

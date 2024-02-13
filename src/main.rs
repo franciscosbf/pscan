@@ -35,7 +35,7 @@ fn parse_args(matches: ArgMatches) -> Result<ParsedArgs, ScanError> {
         .map(|rt| {
             let technique = Technique::from(rt.as_str());
             match technique.kind {
-                ScanType::Syn if !is_user_sudo() => Err(ScanError::NormalUser),
+                ScanType::Syn if !is_user_sudo() => Err(ScanError::NormalUserRequired),
                 _ => Ok(technique),
             }
         })

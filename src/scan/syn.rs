@@ -1,6 +1,6 @@
 use std::{
     io::ErrorKind,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddrV4},
     time::{Duration, Instant},
 };
 
@@ -52,23 +52,16 @@ static CHANNEL_CONFIG: Lazy<Config> = Lazy::new(|| Config {
     ..Default::default()
 });
 
-fn to_ipv4(ip: IpAddr) -> Ipv4Addr {
-    match ip {
-        IpAddr::V4(ip) => ip,
-        IpAddr::V6(_) => unreachable!(),
-    }
-}
-
 #[derive(Debug)]
 pub struct Scan;
 
 impl Executor for Scan {
-    fn scan(&self, addr: &SocketAddr) -> PortState {
+    fn scan(&self, addr: &SocketAddrV4) -> PortState {
         let interface = &interface::DEFAULT;
         let gateway_mac = *interface::GATEWAY;
         let config = *CHANNEL_CONFIG;
 
-        let (mut sender, mut receiver) = match channel(interface, config) {
+        let (mut sender, mut receiver) = match channel(interface.raw(), config) {
             Ok(Channel::Ethernet(tx, rx)) => (tx, rx),
             Ok(_) => unreachable!(),
             Err(e) => abort(ScanError::DatalinkChannelFailed(e)),
@@ -76,9 +69,10 @@ impl Executor for Scan {
 
         // Prepare SYN packet.
 
-        let source_ip = to_ipv4(interface.ips.first().unwrap().ip());
+        let source_ip = interface.ip();
         let source_port = rand::random();
-        let destination_ip = to_ipv4(addr.ip());
+
+        let destination_ip = *addr.ip();
         let destination_port = addr.port();
 
         // -> TCP packet.
@@ -121,7 +115,7 @@ impl Executor for Scan {
         let mut raw_ethernet_pckt = [0; ETHERNET_PKT_SZ];
         let mut ethernet_pckt = MutableEthernetPacket::new(&mut raw_ethernet_pckt).unwrap();
         ethernet_pckt.set_ethertype(EtherTypes::Ipv4);
-        ethernet_pckt.set_source(interface.mac.unwrap());
+        ethernet_pckt.set_source(interface.mac());
         ethernet_pckt.set_destination(gateway_mac);
         ethernet_pckt.set_payload(ipv4_pckt.packet());
 

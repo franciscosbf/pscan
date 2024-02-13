@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::SocketAddrV4;
 
 use super::{Executor, PortState};
 
@@ -6,7 +6,7 @@ use super::{Executor, PortState};
 pub struct Scan;
 
 impl Executor for Scan {
-    fn scan(&self, addr: &SocketAddr) -> PortState {
+    fn scan(&self, addr: &SocketAddrV4) -> PortState {
         let _ = addr;
 
         todo!()
