@@ -19,13 +19,13 @@ pub fn build(
     src: Ipv4Addr,
     dest: Ipv4Addr,
     next_level_proto: IpNextHeaderProtocol,
-    packet: &[u8],
+    raw_packet: &[u8],
 ) -> EthernetPacket {
     let interface = &interface::DEFAULT;
     let gateway = *interface::GATEWAY;
 
     // -> IPv4 packet.
-    let ipv4_pckt_sz = IPV4_HDR_SZ as usize + packet.len();
+    let ipv4_pckt_sz = IPV4_HDR_SZ as usize + raw_packet.len();
     let raw_ipv4_pckt = vec![0; ipv4_pckt_sz];
     let mut ipv4_pckt = MutableIpv4Packet::owned(raw_ipv4_pckt).unwrap();
     ipv4_pckt.set_version(4);
@@ -38,7 +38,7 @@ pub fn build(
     ipv4_pckt.set_source(src);
     ipv4_pckt.set_destination(dest);
     ipv4_pckt.set_checksum(ipv4::checksum(&ipv4_pckt.to_immutable()));
-    ipv4_pckt.set_payload(packet);
+    ipv4_pckt.set_payload(raw_packet);
 
     // -> Ethernet packet.
     let ethernet_pckt_sz = ETHERNET_HDR_SZ + ipv4_pckt_sz;
