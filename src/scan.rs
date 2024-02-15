@@ -6,15 +6,16 @@ use std::{
 
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
-use self::port::{Protocol, COMMON_PORTS};
+use self::{
+    method::{SynScan, TcpScan, UdpScan},
+    port::{Protocol, COMMON_PORTS},
+};
 
 mod base_pckt;
 mod channel;
 mod interface;
+mod method;
 mod port;
-mod syn;
-mod tcp;
-mod udp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortState {
@@ -77,9 +78,9 @@ impl Technique {
 
     pub fn from(raw: &str) -> Technique {
         match raw {
-            "tcp" => Self::new(&tcp::Scan, ScanType::Tcp),
-            "syn" => Self::new(&syn::Scan, ScanType::Syn),
-            "udp" => Self::new(&udp::Scan, ScanType::Udp),
+            "tcp" => Self::new(&TcpScan, ScanType::Tcp),
+            "syn" => Self::new(&SynScan, ScanType::Syn),
+            "udp" => Self::new(&UdpScan, ScanType::Udp),
             _ => unreachable!(),
         }
     }

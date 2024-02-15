@@ -14,9 +14,11 @@ use pnet::packet::{
     Packet,
 };
 
-use crate::{abort, error::ScanError};
-
-use super::{base_pckt, channel, interface, Executor, PortState};
+use crate::{
+    abort,
+    error::ScanError,
+    scan::{base_pckt, channel, interface, Executor, PortState},
+};
 
 const SEND_TRIALS: usize = 4;
 const SEND_TIMOUT: Duration = Duration::from_millis(3500);
@@ -57,9 +59,9 @@ impl Display for TcpKnownFlags {
 }
 
 #[derive(Debug)]
-pub struct Scan;
+pub struct SynScan;
 
-impl Executor for Scan {
+impl Executor for SynScan {
     fn scan(&self, addr: &SocketAddrV4) -> PortState {
         let (mut sender, mut receiver) = channel::link();
 
