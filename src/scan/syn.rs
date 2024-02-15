@@ -5,22 +5,18 @@ use std::{
     time::{Duration, Instant},
 };
 
-use once_cell::sync::Lazy;
-use pnet::{
-    datalink::{channel, Channel, Config},
-    packet::{
-        ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket},
-        icmp::{destination_unreachable::IcmpCodes, IcmpCode, IcmpPacket, IcmpTypes},
-        ip::IpNextHeaderProtocols,
-        ipv4::{self, Ipv4Flags, Ipv4Packet, MutableIpv4Packet},
-        tcp::{ipv4_checksum, MutableTcpPacket, TcpFlags, TcpOption, TcpPacket},
-        Packet,
-    },
+use pnet::packet::{
+    ethernet::{EtherTypes, EthernetPacket},
+    icmp::{destination_unreachable::IcmpCodes, IcmpCode, IcmpPacket, IcmpTypes},
+    ip::IpNextHeaderProtocols,
+    ipv4::Ipv4Packet,
+    tcp::{ipv4_checksum, MutableTcpPacket, TcpFlags, TcpOption, TcpPacket},
+    Packet,
 };
 
 use crate::{abort, error::ScanError};
 
-use super::{interface, Executor, PortState};
+use super::{base_pckt, channel, interface, Executor, PortState};
 
 const SEND_TRIALS: usize = 4;
 const SEND_TIMOUT: Duration = Duration::from_millis(3500);
@@ -28,13 +24,6 @@ const SEND_TIMOUT: Duration = Duration::from_millis(3500);
 const TCP_PKT_SZ: usize = 40;
 const TCP_HDR_SZ: u8 = TCP_PKT_SZ as u8;
 const TCP_HDR_WORDS: u8 = TCP_HDR_SZ / 4;
-
-const IPV4_HDR_SZ: u8 = 20;
-const IPV4_HDR_WORDS: u8 = IPV4_HDR_SZ / 4;
-const IPV4_PKT_SZ: usize = IPV4_HDR_SZ as usize + TCP_PKT_SZ;
-const IPV4_TTL: u8 = 64;
-
-const ETHERNET_PKT_SZ: usize = 14 + IPV4_PKT_SZ;
 
 const SYN_ACK: u8 = TcpFlags::SYN | TcpFlags::ACK;
 const RST_ACK: u8 = TcpFlags::RST | TcpFlags::ACK;
@@ -67,28 +56,16 @@ impl Display for TcpKnownFlags {
     }
 }
 
-static CHANNEL_CONFIG: Lazy<Config> = Lazy::new(|| Config {
-    read_timeout: Some(Duration::from_millis(1500)),
-    write_timeout: Some(Duration::from_millis(1500)),
-    ..Default::default()
-});
-
 #[derive(Debug)]
 pub struct Scan;
 
 impl Executor for Scan {
     fn scan(&self, addr: &SocketAddrV4) -> PortState {
-        let interface = &interface::DEFAULT;
-        let gateway_mac = *interface::GATEWAY;
-        let config = *CHANNEL_CONFIG;
-
-        let (mut sender, mut receiver) = match channel(interface.raw(), config) {
-            Ok(Channel::Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => unreachable!(),
-            Err(e) => abort(ScanError::DatalinkChannelFailed(e)),
-        };
+        let (mut sender, mut receiver) = channel::link();
 
         // Prepare SYN packet.
+
+        let interface = &interface::DEFAULT;
 
         let source_ip = interface.ip();
         let source_port = rand::random();
@@ -117,28 +94,12 @@ impl Executor for Scan {
             &destination_ip,
         ));
 
-        // -> IPv4 packet.
-        let mut raw_ipv4_pckt = [0; IPV4_PKT_SZ];
-        let mut ipv4_pckt = MutableIpv4Packet::new(&mut raw_ipv4_pckt).unwrap();
-        ipv4_pckt.set_version(4);
-        ipv4_pckt.set_header_length(IPV4_HDR_WORDS);
-        ipv4_pckt.set_total_length(IPV4_PKT_SZ as u16);
-        ipv4_pckt.set_identification(rand::random());
-        ipv4_pckt.set_flags(Ipv4Flags::DontFragment);
-        ipv4_pckt.set_ttl(IPV4_TTL);
-        ipv4_pckt.set_next_level_protocol(IpNextHeaderProtocols::Tcp);
-        ipv4_pckt.set_source(source_ip);
-        ipv4_pckt.set_destination(destination_ip);
-        ipv4_pckt.set_checksum(ipv4::checksum(&ipv4_pckt.to_immutable()));
-        ipv4_pckt.set_payload(tcp_pckt.packet());
-
-        // -> Ethernet packet.
-        let mut raw_ethernet_pckt = [0; ETHERNET_PKT_SZ];
-        let mut ethernet_pckt = MutableEthernetPacket::new(&mut raw_ethernet_pckt).unwrap();
-        ethernet_pckt.set_ethertype(EtherTypes::Ipv4);
-        ethernet_pckt.set_source(interface.mac());
-        ethernet_pckt.set_destination(gateway_mac);
-        ethernet_pckt.set_payload(ipv4_pckt.packet());
+        let ethernet_pckt = base_pckt::build(
+            source_ip,
+            destination_ip,
+            IpNextHeaderProtocols::Tcp,
+            tcp_pckt.packet(),
+        );
 
         let mut send_syn = || match sender.send_to(ethernet_pckt.packet(), None).unwrap() {
             Ok(_) => {

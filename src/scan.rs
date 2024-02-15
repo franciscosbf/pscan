@@ -8,6 +8,8 @@ use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 use self::port::{Protocol, COMMON_PORTS};
 
+mod base_pckt;
+mod channel;
 mod interface;
 mod port;
 mod syn;
