@@ -17,7 +17,7 @@ use pnet::packet::{
 use crate::{
     abort,
     error::ScanError,
-    scan::{base_pckt, channel, interface, Executor, PortState},
+    scan::{channel, interface, pckt, Executor, PortState},
 };
 
 const SEND_TRIALS: usize = 4;
@@ -96,116 +96,100 @@ impl Executor for SynScan {
             &destination_ip,
         ));
 
-        let ethernet_pckt = base_pckt::build(
+        let ethernet_pckt = pckt::build(
             source_ip,
             destination_ip,
             IpNextHeaderProtocols::Tcp,
             tcp_pckt.packet(),
         );
 
-        let mut send_syn = || match sender.send_to(ethernet_pckt.packet(), None).unwrap() {
-            Ok(_) => {
-                log::debug!("Sent `SYN` TCP packet to port `{}`", destination_port);
-
-                None
-            }
-            Err(e) if e.kind() == ErrorKind::TimedOut => {
-                // This may indicate a false alert.
-                Some(PortState::Unknown)
-            }
-            Err(e) => abort(ScanError::PacketSendFailed(IpAddr::V4(destination_ip), e)),
-        };
-
-        // First time sending.
-        if let Some(status) = send_syn() {
-            return status;
-        }
-
         let mut trials = 0..SEND_TRIALS;
         let timeout = Instant::now();
 
         // The following algorithm is based on https://nmap.org/book/synscan.html
 
-        'lp: loop {
-            match receiver.next() {
-                Ok(raw) => 'okb: {
-                    let ethernet_pckt = EthernetPacket::new(raw).unwrap();
-                    if ethernet_pckt.get_ethertype() != EtherTypes::Ipv4 {
-                        break 'okb;
-                    }
+        loop {
+            match sender.send_to(ethernet_pckt.packet(), None).unwrap() {
+                Ok(_) => log::debug!("Sent `SYN` TCP packet to port `{}`", destination_port),
+                Err(e) if e.kind() == ErrorKind::TimedOut => return PortState::Unknown,
+                Err(e) => abort(ScanError::PacketSendFailed(IpAddr::V4(destination_ip), e)),
+            };
 
-                    let ipv4_pckt = Ipv4Packet::new(ethernet_pckt.payload()).unwrap();
-                    if !(ipv4_pckt.get_destination() == source_ip
-                        && ipv4_pckt.get_source() == destination_ip)
-                    {
-                        break 'okb;
-                    }
-
-                    match ipv4_pckt.get_next_level_protocol() {
-                        IpNextHeaderProtocols::Tcp => {
-                            let tcp_pckt = TcpPacket::new(ipv4_pckt.payload()).unwrap();
-                            if !(tcp_pckt.get_destination() == source_port
-                                && tcp_pckt.get_source() == destination_port)
-                            {
-                                break 'okb;
-                            }
-
-                            let tcp_flags = TcpKnownFlags(tcp_pckt.get_flags());
-
-                            log::debug!(
-                                "Received `{}` TCP packet from port `{}`",
-                                tcp_flags,
-                                destination_port,
-                            );
-
-                            if tcp_flags.syn_ack() {
-                                return PortState::Open;
-                            }
-
-                            // RST flag means closed and everyone else.
+            'rcv_lp: loop {
+                match receiver.next() {
+                    Ok(raw) => 'ok_blk: {
+                        let ethernet_pckt = EthernetPacket::new(raw).unwrap();
+                        if ethernet_pckt.get_ethertype() != EtherTypes::Ipv4 {
+                            break 'ok_blk;
                         }
-                        IpNextHeaderProtocols::Icmp => {
-                            let icmp_pckt = IcmpPacket::new(ipv4_pckt.payload()).unwrap();
-                            let icmp_type = icmp_pckt.get_icmp_type();
-                            let icmp_code = icmp_pckt.get_icmp_code();
 
-                            log::debug!(
-                                "Received ICMP packet from port `{}` with type `{}` and code `{}`",
-                                destination_port,
-                                icmp_type.0,
-                                icmp_code.0
-                            );
-
-                            if icmp_type == IcmpTypes::DestinationUnreachable
-                                && ICMP_TYPE_3_CODES.contains(&icmp_code)
-                            {
-                                return PortState::Filtered;
-                            }
+                        let ipv4_pckt = Ipv4Packet::new(ethernet_pckt.payload()).unwrap();
+                        if !(ipv4_pckt.get_destination() == source_ip
+                            && ipv4_pckt.get_source() == destination_ip)
+                        {
+                            break 'ok_blk;
                         }
-                        _ => (), // Assumes that's closed.
-                    }
 
-                    break 'lp; // Gives up.
+                        match ipv4_pckt.get_next_level_protocol() {
+                            IpNextHeaderProtocols::Tcp => {
+                                let tcp_pckt = TcpPacket::new(ipv4_pckt.payload()).unwrap();
+                                if !(tcp_pckt.get_destination() == source_port
+                                    && tcp_pckt.get_source() == destination_port)
+                                {
+                                    break 'ok_blk;
+                                }
+
+                                let tcp_flags = TcpKnownFlags(tcp_pckt.get_flags());
+
+                                log::debug!(
+                                    "Received `{}` TCP packet from port `{}`",
+                                    tcp_flags,
+                                    destination_port,
+                                );
+
+                                if tcp_flags.syn_ack() {
+                                    return PortState::Open;
+                                }
+
+                                // RST flag means closed and everyone else.
+                            }
+                            IpNextHeaderProtocols::Icmp => {
+                                let icmp_pckt = IcmpPacket::new(ipv4_pckt.payload()).unwrap();
+                                let icmp_type = icmp_pckt.get_icmp_type();
+                                let icmp_code = icmp_pckt.get_icmp_code();
+
+                                log::debug!(
+                                    "Received ICMP packet from port `{}` with type `{}` and code `{}`",
+                                    destination_port,
+                                    icmp_type.0,
+                                    icmp_code.0
+                                );
+
+                                if icmp_type == IcmpTypes::DestinationUnreachable
+                                    && ICMP_TYPE_3_CODES.contains(&icmp_code)
+                                {
+                                    return PortState::Filtered;
+                                }
+                            }
+                            _ => (), // Assumes that's closed.
+                        }
+
+                        return PortState::_Closed; // Gives up.
+                    }
+                    Err(e) if e.kind() == ErrorKind::TimedOut => (),
+                    Err(e) => abort(ScanError::PacketRecvFailed(IpAddr::V4(destination_ip), e)),
                 }
-                Err(e) if e.kind() == ErrorKind::TimedOut => (), // Tries again if possible.
-                Err(e) => abort(ScanError::PacketRecvFailed(IpAddr::V4(destination_ip), e)),
-            }
 
-            if timeout.elapsed() <= SEND_TIMOUT {
-                // Goes back to packet reading before trying to re-send syn packet.
-                continue;
-            }
+                if timeout.elapsed() <= SEND_TIMOUT {
+                    continue;
+                }
 
-            if trials.next().is_none() {
+                if trials.next().is_some() {
+                    break 'rcv_lp; // Tries to resend SYN packet.
+                }
+
                 return PortState::Filtered;
             }
-
-            // Proceeds to the next try.
-            if let Some(status) = send_syn() {
-                return status;
-            }
         }
-
-        PortState::_Closed
     }
 }

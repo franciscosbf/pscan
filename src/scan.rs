@@ -11,10 +11,10 @@ use self::{
     port::{Protocol, COMMON_PORTS},
 };
 
-mod base_pckt;
 mod channel;
 mod interface;
 mod method;
+mod pckt;
 mod port;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
