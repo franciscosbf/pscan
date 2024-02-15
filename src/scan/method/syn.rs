@@ -20,8 +20,8 @@ use crate::{
     scan::{channel, interface, pckt, Executor, PortState},
 };
 
-const SEND_TRIALS: usize = 4;
-const SEND_TIMOUT: Duration = Duration::from_millis(3500);
+const SEND_ATTEMPTS: usize = 3;
+const SEND_TIMOUT: Duration = Duration::from_millis(4000);
 
 const TCP_PKT_SZ: usize = 40;
 const TCP_HDR_SZ: u8 = TCP_PKT_SZ as u8;
@@ -103,8 +103,7 @@ impl Executor for SynScan {
             tcp_pckt.packet(),
         );
 
-        let mut trials = 0..SEND_TRIALS;
-        let timeout = Instant::now();
+        let mut trials = 0..SEND_ATTEMPTS;
 
         // The following algorithm is based on https://nmap.org/book/synscan.html
 
@@ -114,6 +113,8 @@ impl Executor for SynScan {
                 Err(e) if e.kind() == ErrorKind::TimedOut => return PortState::Unknown,
                 Err(e) => abort(ScanError::PacketSendFailed(IpAddr::V4(destination_ip), e)),
             };
+
+            let timeout = Instant::now();
 
             'rcv_lp: loop {
                 match receiver.next() {
