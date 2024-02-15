@@ -75,7 +75,8 @@ fn print_results(result: ScanResult) {
 fn main() -> Result<()> {
     let arg_matches = Command::new(crate_name!())
         .about(
-            "Port scanner capable of inspect TCP and UDP protocols. SYN scan requires sudo user.",
+            "Port scanner capable of inspecting the TCP protocol.\n\
+            SYN scan requires sudo user.",
         )
         .version(crate_version!())
         .arg_required_else_help(true)
