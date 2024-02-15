@@ -22,7 +22,7 @@ pub enum PortState {
     Open,
     Filtered,
     Unknown,
-    _Closed, // Closed ports arent exposed.
+    _Closed, // Closed ports aren't exposed.
 }
 
 impl Display for PortState {
