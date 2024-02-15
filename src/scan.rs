@@ -7,8 +7,8 @@ use std::{
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 
 use self::{
-    method::{SynScan, TcpScan, UdpScan},
-    port::{Protocol, COMMON_PORTS},
+    method::{SynScan, TcpScan},
+    port::COMMON_PORTS,
 };
 
 mod channel;
@@ -80,7 +80,6 @@ impl Technique {
         match raw {
             "tcp" => Self::new(&TcpScan, ScanType::Tcp),
             "syn" => Self::new(&SynScan, ScanType::Syn),
-            "udp" => Self::new(&UdpScan, ScanType::Udp),
             _ => unreachable!(),
         }
     }
@@ -141,42 +140,28 @@ impl Scanner {
         Some(state)
     }
 
-    fn scan_all(&self) -> Vec<PortResult> {
-        COMMON_PORTS
-            .into_par_iter()
-            .filter_map(|info| {
-                self.techniques
-                    .iter()
-                    .find_map(|t| match (t.kind, info.protocol) {
-                        (_, Protocol::Both)
-                        | (ScanType::Syn | ScanType::Tcp, Protocol::Tcp)
-                        | (ScanType::Udp, Protocol::Udp) => self
-                            .scan_port(t.executor, info.port)
-                            .map(|state| PortResult::new(info.port, state, t.kind)),
-                        _ => None,
-                    })
-            })
-            .collect()
+    fn scan_all(&self) -> rayon::slice::Iter<'_, u16> {
+        COMMON_PORTS.into_par_iter()
     }
 
-    fn scan_selected(&self, ports: &[u16]) -> Vec<PortResult> {
-        ports
-            .into_par_iter()
-            .filter_map(|&port| {
-                self.techniques.iter().find_map(|t| {
-                    self.scan_port(t.executor, port)
-                        .map(|state| PortResult::new(port, state, t.kind))
-                })
-            })
-            .collect()
+    fn scan_selected<'a>(&self, ports: &'a [u16]) -> rayon::slice::Iter<'a, u16> {
+        ports.into_par_iter()
     }
 
     pub fn start(&self) -> ScanResult {
-        let now = Instant::now();
-        let ports = match self.ports {
+        let iter = match self.ports {
             PortsToScan::All => self.scan_all(),
             PortsToScan::Selected(ref ports) => self.scan_selected(ports),
-        };
+        }
+        .filter_map(|&port| {
+            self.techniques.iter().find_map(|t| {
+                self.scan_port(t.executor, port)
+                    .map(|state| PortResult::new(port, state, t.kind))
+            })
+        });
+
+        let now = Instant::now();
+        let ports = iter.collect();
         let elapsed = now.elapsed();
 
         ScanResult::new(elapsed, ports)

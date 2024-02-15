@@ -89,12 +89,11 @@ fn main() -> Result<()> {
         .args([
             // Scan techniques.
             arg!(-t --tcp "TCP scan").action(ArgAction::SetTrue),
-            arg!(-u --udp "UDP scan").action(ArgAction::SetTrue),
             arg!(-s --syn "SYN scan").action(ArgAction::SetTrue),
         ])
         .group(
             ArgGroup::new("techniques")
-                .args(["tcp", "udp", "syn"])
+                .args(["tcp", "syn"])
                 .multiple(true)
                 .required(true),
         )
